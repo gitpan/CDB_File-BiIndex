@@ -3,7 +3,7 @@
 package CDB_File::BiIndex;
 use vars qw($VERSION);
 
-$VERSION = '0.012';
+$VERSION = '0.017';
 
 =head1 NAME
 
@@ -91,6 +91,8 @@ sub new ($$;$) {
 
   #work out what the arguments mean.. 
   my $first_db_name = shift;
+  carp "usage new CDB_File::BiIndex (<file>, [<file>])"
+    unless defined $first_db_name;
   my $second_db_name;
   if (@_) {
     $second_db_name = shift ;
@@ -287,7 +289,7 @@ sub second_next ($) {
   my $self=shift;
   print STDERR "second_next has been called\n"
     if $CDB_File::BiIndex::verbose & 32;
-  croak "second_next called without second_first" 
+  croak "second_next called without second_first"
     unless defined $self->{"second_lastkey"};
   #CDB_File danger
 
