@@ -3,7 +3,7 @@
 package CDB_File::BiIndex;
 use vars qw($VERSION);
 
-$VERSION = '0.017';
+$VERSION = '0.025';
 
 =head1 NAME
 
@@ -27,7 +27,7 @@ same word can occur in each language, but it's translations would often
 be different.
 
     I    <->  je
-    {bar, pub}  <->  bar 
+    {bar, pub}  <->  bar
     {truck, lorry, heavy goods vehicle} <-> camion
 
 In this implementation it's just two parallel cdb hashes, which you
@@ -64,6 +64,21 @@ have to generate in advance.
 
 use Fcntl;
 use CDB_File 0.86; # there are serious bugs in previous versions
+
+# delete from here ...
+BEGIN {
+ $CDB_File::VERSION==0.9 and die <<EOF;
+
+Suspicious CDB_File version string found (0.9).  This was used by
+CDB_File 0.83 and can cause confusion!!! Please verify that you have
+CDB_File _distribution_ version equal to or better than 0.86 and then
+delete this check from the CDB_File::BiIndex.  See the
+CDB_File::BiIndex Manual page (BUGS section) for details.
+
+EOF
+}
+# ... delete to here
+
 use Carp;
 use Data::Dumper;
 use strict;
@@ -326,6 +341,28 @@ sub second_set_iterate ($$) {
     if $CDB_File::BiIndex::verbose & 32;
   $self->{"second_lastkey"}=shift;
 }
+
+=head1 BUGS
+
+This module requires the version of the CDB_File perl module to be
+better than 0.86.  Unfortunately, version 0.83 was given the version
+string "0.9" (and version 0.86 has the string '0.86').  This means
+that normal perl version checking will not give the correct warnings.
+There is a hardwired check that the version is not 0.9.  I assume that
+future CDB_File modules won't use that version number, but if they do,
+then please edit inside the CDB_File::BiIndex perl module file its
+self and delete the section between the lines
+
+  # delete from here ...
+
+and
+
+  # ... delete to here
+
+the module will then hopefully work properly.
+
+N.B. please only do that E<if you have verified that you have a newer
+version> of the distribution than 0.86.
 
 =head1 COPYING
 
