@@ -1,4 +1,5 @@
 package CDB_File::BiIndex::Generator;
+$REVISION=q$Revision: 1.4 $ ; $VERSION = sprintf ( "%d.%02d", $REVISION =~ /(\d+).(\d+)/ );
 use CDB_File::Generator;
 use strict;
 

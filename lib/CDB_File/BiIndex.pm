@@ -1,9 +1,10 @@
 #!/usr/bin/perl -w
 
 package CDB_File::BiIndex;
+$REVISION=q$Revision: 1.14 $ ;
 use vars qw($VERSION);
 
-$VERSION = '0.025';
+$VERSION = '0.030';
 
 =head1 NAME
 
@@ -62,8 +63,12 @@ have to generate in advance.
 
 =cut
 
+use warnings;
+use strict;
+
 use Fcntl;
 use CDB_File 0.86; # there are serious bugs in previous versions
+use Carp;
 
 # delete from here ...
 BEGIN {
@@ -77,18 +82,58 @@ CDB_File::BiIndex Manual page (BUGS section) for details.
 
 EOF
 }
+
 # ... delete to here
 
-use Carp;
-use Data::Dumper;
-use strict;
-
-$CDB_File::BiIndex::verbose=0; #no debugging messages
-#$CDB_File::BiIndex::verbose=0xffff; #all debugging messages
+$CDB_File::BiIndex::verbose=0 unless defined $CDB_File::BiIndex::verbose;
+#all debugging messages
+#$CDB_File::BiIndex::verbose=0xffff unless defined $CDB_File::BiIndex::verbose;
 
 =head1 METHODS
 
-=head2 new
+=cut
+
+sub DUMB () {1};
+sub SEEKABLE () {2};
+
+our ($mode);
+
+BEGIN {
+  $mode=DUMB;
+}
+
+#  =head1 _cdb_set_iterate
+
+#  _cdb_set_iterate sets of a CDB so that it will start just after the
+#  key given.
+
+#  =cut
+
+sub _cdb_set_iterate {
+  my $cdb = shift;
+  my $target = shift;
+  print STDERR "cdb_set_iterate called for $target\n"
+    if $CDB_File::BiIndex::verbose & 32;
+ CASE: {
+    $mode == DUMB and do {
+      my $key=$cdb->FIRSTKEY();
+      while ( defined $key and $key lt $target) {
+	print "key is $key\n"
+	  if $CDB_File::BiIndex::verbose & 64;
+	$key=$cdb->NEXTKEY($key);
+      }
+      print "final key is $key\n"
+	if $CDB_File::BiIndex::verbose & 64;
+      return $key;
+    };
+    die "more efficient modes than DUMB not yet defined";
+  }
+  die "internal error: don't know how to _cdb_set_iterate";
+}
+
+
+
+=head2 CDB_File::BiIndex->new(<file>,[<file>])
 
 	new (CLASS, database_filenamebase)
 	new (CLASS, first_database_filename, second_database_filename)
@@ -99,6 +144,7 @@ New opens and sets up the databases.
 
 #FIXME.  This should be generalised so it works on any pair of hashes.
 #which is very easy.
+
 
 sub new ($$;$) {
   my $class=shift;
@@ -117,19 +163,23 @@ sub new ($$;$) {
   }
 
   $self->{"first_cdb"} = tie my %first_hash, "CDB_File", $first_db_name
-    or die $!;
+    or die "Couldn't tie $first_db_name" . $!;
   $self->{"first_hash"} = \%first_hash;
   $self->{"second_cdb"} = tie my %second_hash, "CDB_File", $second_db_name
-    or die $!;
+    or die "Couldn't tie $second_db_name" . $!;
   $self->{"second_hash"} = \%second_hash;
+
+  $self->{"first_lastkey"}=undef;
+  $self->{"second_lastkey"}=undef;
+
   return $self;
 }
 
 
-=head2 lookup_first lookup_second (key)
+=head2 $bi->lookup_first(<key>) $bi->lookup_second(<key>)
 
-returns the list of values which are indexed against key, direction of
-the relation depending on which function is used.
+returns a B<reference> to a list of values which are indexed against
+key, direction of the relation depending on which function is used.
 
 =cut
 
@@ -138,12 +188,11 @@ sub lookup_first ($$) {
   my ($self, $key)=@_;
   print STDERR "lookup_first has been called with key $key\n"
     if $CDB_File::BiIndex::verbose & 32;
-
+  croak "lookup_first called with undefined key"
+    unless defined $key;
   my $return=$self->{"first_cdb"}->multi_get($key);
-  #FIXME: all this testing is needless cruft that should go away once 
-  #we have a statement from Tim about how CDB_File should behave.  
   return undef unless defined $return;
-  die "multi_get didn't return and array ref" unless
+  die "multi_get didn't return an array ref" unless
       (ref $return) =~ m/ARRAY/;
   return undef unless @$return;
   return $return;
@@ -153,12 +202,11 @@ sub lookup_second ($$) {
   my ($self, $key)=@_;
   print STDERR "lookup_second has been called with key $key\n"
     if $CDB_File::BiIndex::verbose & 32;
-  
+  croak "lookup_second called with undefined key"
+    unless defined $key;
   my $return=$self->{"second_cdb"}->multi_get($key);
-  #FIXME: all this testing is needless cruft that should go away once 
-  #we have a statement from Tim about how CDB_File should behave.  
   return undef unless defined $return;
-  die "multi_get didn't return and array ref" unless
+  die "multi_get didn't return an array ref" unless
       (ref $return) =~ m/ARRAY/;
   return undef unless @$return;
   return $return;
@@ -215,41 +263,109 @@ sub lookup_second ($$) {
 #   return $break_count;
 # }
 
-=head1 Iterators
+=head1 ITERATORS
 
 The iterators iterate over the different keys in the database.  They
 skip repeated keys.
 
+=over 4
+
+=item first_set_iterate(<key>) second_set_iterate(<key>)
+
+set the key of the next value that will be returned
+
+=item first_next([<last key>]) second_next([<last key>])
+
+return the next key in the hash.  If there has never been any
+iteration before we will return the first key from the database.  If
+there has been iteration, we will return the key imediately following
+the key which was last returned.
+
+If called with an argument, the key following that argument will be
+returned in any case, but if that argument is exactly the last key
+returned, we won't seek in the database (set_iterate would do that
+anyway).
+
 =cut
+
+
+# we always have to make sure that FIRST is called once
+# we can call nextkey all we want until we go off the end.
+# when we go off the end, we should call FIRST again
+
+# strictly internal functions to overcome some of CDB_Files
+# wierdnesses and to allow us to iterate at the same time as doing
+# other lookups.
+
+#  =item xx_first()
+
+#  return the first key
+
+#  =item xx_next()
+
+#  return the next key in the hash after a first
+
+#  =item xx_reset()
+
+#  iteration will start from the first key again.  Don't normally need to call this.
+
+#  =cut
 
 sub first_reset ($) {
   print STDERR "first_reset called\n"
     if $CDB_File::BiIndex::verbose & 32;
   my $self=shift;
-  my $a=scalar keys %{$self->{"first_hash"}}; 
-  delete $self->{"first_lastkey"};
+  my $a=scalar keys %{$self->{"first_hash"}};
+  $self->{"first_lastkey"}=undef;
 }
 
 sub first_first ($) {
   print STDERR "first_first called\n"
     if $CDB_File::BiIndex::verbose & 32;
   my $self=shift;
-  $self->first_reset();
+  $self->first_reset(); #overcomes CDB wierdness if I remember??
   my $key =  $self->{"first_cdb"}->FIRSTKEY();
   $self->{"first_lastkey"}=$key;
   return $key;
 }
 
-sub first_next ($) {
+sub first_next ($;$) {
   my $self=shift;
-  print STDERR "first_next has been called\n"
-    if $CDB_File::BiIndex::verbose & 32;
-  croak "first_next called without first_first" 
-    unless defined $self->{"first_lastkey"};
-  #CDB_File danger
+  my $key=shift;
 
   my $lastkey=$self->{"first_lastkey"};
-  my $key=$lastkey;
+
+  $CDB_File::BiIndex::verbose & 32 && do {
+    print STDERR "first_next called ";
+    if (defined $lastkey ) {
+      print STDERR " stored key $lastkey";
+    } else {
+      print STDERR " no stored key";
+    }
+    if (defined $key ) {
+      print STDERR " key $key\n";
+    } else {
+      print STDERR " no key\n";
+    }
+  };
+
+ CASE: {
+
+    defined $lastkey or defined $key or do {
+      #this is the start of iteration
+      print STDERR "never iterated; start with first_first\n"
+	if $CDB_File::BiIndex::verbose & 32;
+      return $self->first_first();
+    };
+
+    defined $key and not (defined $lastkey and $key eq $lastkey) and do {
+      $self->first_set_iterate($key);
+      $lastkey=$key;
+    };
+
+  }
+
+  $key=$lastkey;
 
  KEY: while (1) {
     $key=$self->{"first_cdb"}->NEXTKEY($key);
@@ -257,36 +373,34 @@ sub first_next ($) {
     $key eq $lastkey or last KEY;
     print STDERR "repeat of last key $key. skipping.\n"
       if $CDB_File::BiIndex::verbose & 128;
-    $key =  $self->{"first_cdb"}->NEXTKEY($key);
   }
+
   ( $CDB_File::BiIndex::verbose & 64 ) && do {
     print STDERR "returning key $key\n" if defined $key ;
-    print STDERR "returning undefined key \n" unless defined $key;
+    print STDERR "reached the end returning undefined key \n" 
+      unless defined $key;
   };
+
+  #if we run off the end then we should start at the beginning next time
   $self->{"first_lastkey"}=$key;
   return $key;
 }
 
-sub first_iterate ($) {
-  my $self=shift;
-  print STDERR "first_iterate has been called\n"
-    if $CDB_File::BiIndex::verbose & 32;
-  return $self->first_next() if defined $self->{"first_lastkey"};
-  return $self->first_first();
-}
-
 sub first_set_iterate ($$) {
   my $self=shift;
-  print STDERR "first_set_iterate has been called\n"
+  my $key=shift;
+  print STDERR "first_set_iterate has been called with key $key\n"
     if $CDB_File::BiIndex::verbose & 32;
-  $self->{"first_lastkey"}=shift;
+  $key=_cdb_set_iterate($self->{"first_cdb"}, $key);
+  $self->{"first_lastkey"}=$key;
+  return $key;
 }
 
 sub second_reset ($) {
   print STDERR "second_reset called\n"
     if $CDB_File::BiIndex::verbose & 32;
   my $self=shift;
-  my $a=scalar keys %{$self->{"second_hash"}}; 
+  my $a=scalar keys %{$self->{"second_hash"}};
   delete $self->{"second_lastkey"};
 }
 
@@ -294,22 +408,49 @@ sub second_first ($) {
   print STDERR "second_first called\n"
     if $CDB_File::BiIndex::verbose & 32;
   my $self=shift;
-  $self->second_reset();
+#  $self->second_reset(); #overcomes CDB wierdness if I remember??
   my $key =  $self->{"second_cdb"}->FIRSTKEY();
   $self->{"second_lastkey"}=$key;
   return $key;
 }
 
-sub second_next ($) {
+sub second_next ($;$) {
   my $self=shift;
-  print STDERR "second_next has been called\n"
-    if $CDB_File::BiIndex::verbose & 32;
-  croak "second_next called without second_first"
-    unless defined $self->{"second_lastkey"};
-  #CDB_File danger
+  my $key=shift;
 
   my $lastkey=$self->{"second_lastkey"};
-  my $key=$lastkey;
+
+  $CDB_File::BiIndex::verbose & 32 && do {
+    print STDERR "second_next called ";
+    if (defined $lastkey ) {
+      print STDERR " stored key $lastkey";
+    } else {
+      print STDERR " no stored key";
+    }
+    if (defined $key ) {
+      print STDERR " key $key\n";
+    } else {
+      print STDERR " no key\n";
+    }
+  };
+
+ CASE: {
+
+    defined $lastkey or defined $key or do {
+      #this is the start of iteration
+      print STDERR "never iterated; start with second_first\n"
+	if $CDB_File::BiIndex::verbose & 32;
+      return $self->second_first();
+    };
+
+    defined $key and not (defined $lastkey and $key eq $lastkey) and do {
+      $self->second_set_iterate($key);
+      $lastkey=$key;
+    };
+
+  }
+
+  $key=$lastkey;
 
  KEY: while (1) {
     $key=$self->{"second_cdb"}->NEXTKEY($key);
@@ -317,30 +458,29 @@ sub second_next ($) {
     $key eq $lastkey or last KEY;
     print STDERR "repeat of last key $key. skipping.\n"
       if $CDB_File::BiIndex::verbose & 128;
-    $key =  $self->{"second_cdb"}->NEXTKEY($key);
   }
+
   ( $CDB_File::BiIndex::verbose & 64 ) && do {
     print STDERR "returning key $key\n" if defined $key ;
-    print STDERR "returning undefined key \n" unless defined $key;
+    print STDERR "reached the end returning undefined key \n" 
+      unless defined $key;
   };
+
+  #if we run off the end then we should start at the beginning next time
   $self->{"second_lastkey"}=$key;
   return $key;
 }
 
-sub second_iterate ($) {
-  my $self=shift;
-  print STDERR "second_iterate has been called\n"
-    if $CDB_File::BiIndex::verbose & 32;
-  return $self->second_next() if defined $self->{"second_lastkey"};
-  return $self->second_first();
-}
-
 sub second_set_iterate ($$) {
   my $self=shift;
-  print STDERR "second_set_iterate has been called\n"
+  my $key=shift;
+  print STDERR "second_set_iterate has been called with key $key\n"
     if $CDB_File::BiIndex::verbose & 32;
-  $self->{"second_lastkey"}=shift;
+  $key=_cdb_set_iterate($self->{"second_cdb"}, $key);
+  $self->{"second_lastkey"}=$key;
+  return $key;
 }
+
 
 =head1 BUGS
 
@@ -361,7 +501,7 @@ and
 
 the module will then hopefully work properly.
 
-N.B. please only do that E<if you have verified that you have a newer
+N.B. please only do that B<if you have verified that you have a newer
 version> of the distribution than 0.86.
 
 =head1 COPYING

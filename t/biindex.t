@@ -20,7 +20,7 @@ sub nok { print "not ok ", shift, "\n" }
 use CDB_File::BiIndex::Generator;
 $loaded = 1;
 ok(1);
-use CDB_File::BiIndex;
+use CDB_File::BiIndex 0.026;
 $loaded_gen = 1;
 ok(2);
 

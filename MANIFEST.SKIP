@@ -6,6 +6,7 @@
 (^|/)#.*#$
 \.#.*$
 \.old$
+\.bak$
 \.tar.gz$
 \.mikeonly$
 ^blib/

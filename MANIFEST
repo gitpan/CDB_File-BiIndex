@@ -1,5 +1,6 @@
 .cvsignore
 COPYING
+Changes
 INSTALL
 MANIFEST
 MANIFEST.SKIP
@@ -15,6 +16,9 @@ lib/CDB_File/BiIndex.pm
 lib/CDB_File/BiIndex/Generator.pm
 make-rpm-command
 t/biindex.t
+t/iterate.t
 test
+test-data/link_on_page.cdb
+test-data/page_has_link.cdb
 test.1-2
 test.2-1
