@@ -1,0 +1,11 @@
+This module requires DBFile, but that is standard with perl.  It also
+requires MLDBM.  This can be retrieved from any CPAN mirror site.
+
+To build and install the library by running these commands:
+
+   perl Makefile.PL
+   make
+   make install
+
+
+
